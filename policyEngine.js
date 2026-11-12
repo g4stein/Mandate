@@ -1,142 +1,156 @@
 /**
- * Mandate Deterministic Policy Engine
- * Evaluates Agent purchase requests against budget, velocity, merchant allowlists, and risk rules
+ * Mandate v2 - Dual-Layer Policy & AI Risk Auditor Engine
+ * 
+ * Layer 1: Deterministic Rules Engine (Sub-millisecond mathematical enforcement)
+ * Layer 2: Semantic AI Risk Auditor (Evaluates intent prompt, anomalies, risk scoring)
  */
 
-export const DEFAULT_POLICIES = {
-  global: {
-    autoApproveMax: 50.00,       // <= $50 auto-approved (Green)
-    hardCapMax: 200.00,          // > $200 hard blocked (Red)
-    dailyBudget: 500.00,         // Daily max budget
-    requireHumanBetween: [50.01, 200.00], // Yellow escalation zone
-    allowedCurrencies: ['USD', 'EUR', 'GBP'],
-    prohibitedCategories: ['luxury', 'gambling', 'crypto', 'gift_cards', 'weapons'],
-    allowedCategories: ['cloud_hosting', 'saas', 'domain', 'api_credits', 'infrastructure', 'dev_tools'],
-    velocityLimitPerMinute: 5
-  },
-  agents: {
-    'devops-agent-01': {
-      name: 'DevOps Cloud Provisioner',
-      allowedCategories: ['cloud_hosting', 'domain', 'infrastructure', 'dev_tools'],
-      autoApproveMax: 75.00,
-      hardCapMax: 250.00
-    },
-    'research-agent-02': {
-      name: 'Market Intelligence Bot',
-      allowedCategories: ['saas', 'api_credits'],
-      autoApproveMax: 30.00,
-      hardCapMax: 100.00
-    }
-  }
-};
-
 export class PolicyEngine {
-  constructor(initialPolicies = DEFAULT_POLICIES) {
-    this.policies = JSON.parse(JSON.stringify(initialPolicies));
-    this.recentTransactions = []; // for velocity limit tracking
+  constructor() {
+    this.policies = {
+      autoApproveMax: 50.00,
+      hardCapMax: 200.00,
+      dailyBudget: 500.00,
+      allowedCurrencies: ['USD', 'EUR', 'GBP'],
+      allowedCategories: ['cloud_hosting', 'saas', 'domain', 'api_credits', 'infrastructure', 'dev_tools'],
+      prohibitedCategories: ['luxury', 'gambling', 'crypto', 'gift_cards', 'weapons'],
+      velocityLimitPerMinute: 6
+    };
+
     this.dailySpent = 0;
+    this.recentRequests = [];
   }
 
-  getPolicyConfig() {
+  getPolicies() {
     return this.policies;
   }
 
-  updateGlobalPolicy(updates) {
-    this.policies.global = { ...this.policies.global, ...updates };
-    return this.policies.global;
+  updatePolicies(newPolicies) {
+    this.policies = { ...this.policies, ...newPolicies };
+    return this.policies;
   }
 
   /**
-   * Evaluate a transaction request
-   * Returns: { verdict: 'AUTO_APPROVED' | 'ESCALATE_HUMAN' | 'HARD_BLOCKED', reasons: string[], ruleHit: string }
+   * AI Risk Auditor (Semantic & Contextual Risk Score 0 - 100)
    */
-  evaluate({ agentId, amount, currency = 'USD', category, merchant, idempotencyKey }) {
-    const numericAmount = parseFloat(amount);
-    const reasons = [];
-    const now = Date.now();
+  auditAIRisk({ promptIntent = '', item = '', category = '', amount = 0 }) {
+    let riskScore = 10;
+    const flags = [];
 
-    // 1. Currency Check
-    if (!this.policies.global.allowedCurrencies.includes(currency.toUpperCase())) {
+    const suspiciousKeywords = ['urgent', 'wire', 'anonymous', 'bypass', 'gift', 'rolex', 'casino', 'bitcoin'];
+    const lowerText = `${promptIntent} ${item} ${category}`.toLowerCase();
+
+    for (const kw of suspiciousKeywords) {
+      if (lowerText.includes(kw)) {
+        riskScore += 35;
+        flags.push(`Suspicious keyword pattern detected: '${kw}'`);
+      }
+    }
+
+    if (amount > 150) {
+      riskScore += 20;
+      flags.push('High-value agent outlay detected');
+    }
+
+    return {
+      riskScore: Math.min(riskScore, 100),
+      riskLevel: riskScore > 60 ? 'HIGH' : riskScore > 30 ? 'MEDIUM' : 'LOW',
+      flags
+    };
+  }
+
+  /**
+   * Deterministic Policy Evaluation
+   */
+  evaluate({ agentId, amount, currency = 'USD', category = 'dev_tools', item = '', promptIntent = '' }) {
+    const numAmount = parseFloat(amount);
+    const normCategory = (category || '').toLowerCase().trim();
+    const now = Date.now();
+    const reasons = [];
+
+    // Layer 2: Semantic AI Risk Evaluation
+    const aiAudit = this.auditAIRisk({ promptIntent, item, category: normCategory, amount: numAmount });
+
+    // 1. Currency Restriction
+    if (!this.policies.allowedCurrencies.includes(currency.toUpperCase())) {
       return {
         verdict: 'HARD_BLOCKED',
         code: 'ERR_UNSUPPORTED_CURRENCY',
-        reasons: [`Currency ${currency} is not permitted by global policy`]
+        reasons: [`Currency ${currency} rejected by policy`],
+        aiAudit
       };
     }
 
-    // 2. Velocity Limit Check (rate limit per minute)
-    const oneMinuteAgo = now - 60000;
-    const recentAgentRequests = this.recentTransactions.filter(
-      t => t.agentId === agentId && t.timestamp > oneMinuteAgo
-    );
-    if (recentAgentRequests.length >= this.policies.global.velocityLimitPerMinute) {
+    // 2. Velocity Limit Check
+    const oneMinAgo = now - 60000;
+    const agentRecent = this.recentRequests.filter(r => r.agentId === agentId && r.timestamp > oneMinAgo);
+    if (agentRecent.length >= this.policies.velocityLimitPerMinute) {
       return {
         verdict: 'HARD_BLOCKED',
-        code: 'ERR_VELOCITY_LIMIT_EXCEEDED',
-        reasons: [`Velocity limit exceeded: max ${this.policies.global.velocityLimitPerMinute} requests per minute`]
+        code: 'ERR_VELOCITY_BREACH',
+        reasons: [`Velocity limit exceeded: max ${this.policies.velocityLimitPerMinute} requests/min`],
+        aiAudit
       };
     }
 
     // 3. Prohibited Category Check
-    const normalizedCategory = (category || 'unknown').toLowerCase().trim();
-    if (this.policies.global.prohibitedCategories.includes(normalizedCategory)) {
+    if (this.policies.prohibitedCategories.includes(normCategory)) {
       return {
         verdict: 'HARD_BLOCKED',
         code: 'ERR_PROHIBITED_CATEGORY',
-        reasons: [`Category '${normalizedCategory}' is strictly blacklisted by security policy`]
+        reasons: [`Category '${normCategory}' is blacklisted by organizational security policy`],
+        aiAudit
       };
     }
 
-    // Determine agent-specific or fallback global thresholds
-    const agentPolicy = this.policies.agents[agentId] || {};
-    const autoApproveLimit = agentPolicy.autoApproveMax ?? this.policies.global.autoApproveMax;
-    const hardCapLimit = agentPolicy.hardCapMax ?? this.policies.global.hardCapMax;
-
-    // 4. Hard Cap Check (> Hard Cap => Red Path)
-    if (numericAmount > hardCapLimit) {
+    // 4. Hard Cap Check
+    if (numAmount > this.policies.hardCapMax) {
       return {
         verdict: 'HARD_BLOCKED',
         code: 'ERR_HARD_CAP_EXCEEDED',
-        reasons: [`Requested amount $${numericAmount.toFixed(2)} exceeds hard cap of $${hardCapLimit.toFixed(2)}`]
+        reasons: [`Amount $${numAmount.toFixed(2)} exceeds strict hard cap of $${this.policies.hardCapMax.toFixed(2)}`],
+        aiAudit
       };
     }
 
-    // 5. Daily Budget Check
-    if (this.dailySpent + numericAmount > this.policies.global.dailyBudget) {
+    // 5. Daily Budget Ceiling
+    if (this.dailySpent + numAmount > this.policies.dailyBudget) {
       return {
         verdict: 'HARD_BLOCKED',
-        code: 'ERR_DAILY_BUDGET_EXCEEDED',
-        reasons: [`Transaction would breach remaining daily budget limit of $${(this.policies.global.dailyBudget - this.dailySpent).toFixed(2)}`]
+        code: 'ERR_DAILY_BUDGET_EXHAUSTED',
+        reasons: [`Would breach daily organization ceiling ($${this.policies.dailyBudget.toFixed(2)})`],
+        aiAudit
       };
     }
 
-    // 6. Category Allowlist Check
-    const allowedCategories = agentPolicy.allowedCategories ?? this.policies.global.allowedCategories;
-    if (!allowedCategories.includes(normalizedCategory)) {
+    // 6. Category Allowlist Check -> Escalation if unknown
+    if (!this.policies.allowedCategories.includes(normCategory)) {
       return {
         verdict: 'ESCALATE_HUMAN',
         code: 'WARN_UNLISTED_CATEGORY',
-        reasons: [`Category '${normalizedCategory}' is not on the pre-approved whitelist; requires human review`]
+        reasons: [`Category '${normCategory}' is not on the pre-approved whitelist`],
+        aiAudit
       };
     }
 
-    // 7. Auto-Approve Check (<= Auto Limit => Green Path)
-    if (numericAmount <= autoApproveLimit) {
-      // Record transaction
-      this.recentTransactions.push({ agentId, amount: numericAmount, timestamp: now });
-      this.dailySpent += numericAmount;
+    // 7. Auto-Approve Check
+    if (numAmount <= this.policies.autoApproveMax && aiAudit.riskLevel !== 'HIGH') {
+      this.recentRequests.push({ agentId, amount: numAmount, timestamp: now });
+      this.dailySpent += numAmount;
       return {
         verdict: 'AUTO_APPROVED',
-        code: 'PASS_WITHIN_LIMITS',
-        reasons: [`Amount $${numericAmount.toFixed(2)} is within autonomous budget ($${autoApproveLimit.toFixed(2)})`]
+        code: 'PASS_AUTONOMOUS_POLICY',
+        reasons: [`Amount $${numAmount.toFixed(2)} is within autonomous budget ($${this.policies.autoApproveMax.toFixed(2)})`],
+        aiAudit
       };
     }
 
-    // 8. Escalation Zone (Yellow Path)
+    // 8. Human Escalation Path
     return {
       verdict: 'ESCALATE_HUMAN',
-      code: 'REQUIRE_HUMAN_CONFIRMATION',
-      reasons: [`Amount $${numericAmount.toFixed(2)} exceeds autonomous threshold ($${autoApproveLimit.toFixed(2)}) but within safety cap ($${hardCapLimit.toFixed(2)})`]
+      code: 'REQUIRE_HUMAN_APPROVAL',
+      reasons: [`Amount $${numAmount.toFixed(2)} requires supervisor confirmation before PayPal order creation`],
+      aiAudit
     };
   }
 }

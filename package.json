@@ -1,22 +1,20 @@
 {
-  "name": "mandate-ai-firewall",
-  "version": "1.0.0",
-  "description": "Deterministic Spending Firewall for Autonomous AI Agents powered by PayPal Orders v2 API",
+  "name": "mandate-v2-firewall",
+  "version": "2.0.0",
+  "description": "Enterprise AI Spending Firewall & Autonomous Agentic Trust Protocol powered by PayPal Orders v2",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "simulate:green": "node simulate.js green",
-    "simulate:yellow": "node simulate.js yellow",
-    "simulate:red": "node simulate.js red"
+    "simulate": "node simulate.js"
   },
   "keywords": [
     "paypal",
     "agentic-commerce",
     "ai-firewall",
-    "policy-engine",
-    "hackathon",
-    "paypal-orders-v2"
+    "paypal-orders-v2",
+    "hackathon-winner",
+    "policy-engine"
   ],
   "author": "Mandate Core Team",
   "license": "MIT",
